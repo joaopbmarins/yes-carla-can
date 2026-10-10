@@ -7,6 +7,8 @@ import random
 from attacks.reverse_engineering import FEATURE_CAN_ID_PAYLOAD_MAPPER
 from can_network import VCAN_ATTACKER_CHANNEL, CAN_INTERFACE
 
+from attacks.fake_data_fabrication import fake_data_fabrication_func
+
 # ---------------------------------------------------------------------------
 # Live status display
 # ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ def spoofing_attacks_func(bus, feature: str, period: float):
 def main():
     print("CAN network attacks CLI")
     spoofing_attacks = list(FEATURE_CAN_ID_PAYLOAD_MAPPER.keys())
-    available_features = [*spoofing_attacks, "fuzzy", "denial_of_service"]
+    available_features = [*spoofing_attacks, "fuzzy", "denial_of_service", "fake"]
 
     parser = argparse.ArgumentParser(
         description="Perform CAN network attacks.",
@@ -121,6 +123,9 @@ def main():
         elif args.feature == "denial_of_service":
             print(f"Starting denial-of-service attack (period={args.period}s)…\n")
             denial_of_service_func(bus, args.period)
+        elif args.feature == "fake":
+            print("Starting fake_data_fabrication_func")
+            fake_data_fabrication_func(bus)
         else:
             print(f"Starting spoofing attack on '{args.feature}' (period={args.period}s)…\n")
             spoofing_attacks_func(bus, args.feature, args.period)
