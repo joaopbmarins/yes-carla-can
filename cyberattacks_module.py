@@ -124,8 +124,13 @@ def main():
             print(f"Starting denial-of-service attack (period={args.period}s)…\n")
             denial_of_service_func(bus, args.period)
         elif args.feature == "fake":
-            print("Starting fake_data_fabrication_func")
-            fake_data_fabrication_func(bus)
+            print("Starting fake_data_fabrication attack…\n")
+            fake_data_fabrication_func(
+                bus,
+                progress=lambda sent, rate, msg: _print_status(
+                    "Fake Data Fabrication", "replay", sent, rate, msg
+                ),
+            )
         else:
             print(f"Starting spoofing attack on '{args.feature}' (period={args.period}s)…\n")
             spoofing_attacks_func(bus, args.feature, args.period)
