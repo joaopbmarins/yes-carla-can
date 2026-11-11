@@ -8,6 +8,7 @@ from attacks.reverse_engineering import FEATURE_CAN_ID_PAYLOAD_MAPPER
 from can_network import VCAN_ATTACKER_CHANNEL, CAN_INTERFACE
 
 from attacks.fake_data_fabrication import fake_data_fabrication_func
+from attacks.communication_surveillance import communication_surveillance_func
 
 # ---------------------------------------------------------------------------
 # Live status display
@@ -98,7 +99,7 @@ def spoofing_attacks_func(bus, feature: str, period: float):
 def main():
     print("CAN network attacks CLI")
     spoofing_attacks = list(FEATURE_CAN_ID_PAYLOAD_MAPPER.keys())
-    available_features = [*spoofing_attacks, "fuzzy", "denial_of_service", "fake"]
+    available_features = [*spoofing_attacks, "fuzzy", "denial_of_service", "fake", "surveillance"]
 
     parser = argparse.ArgumentParser(
         description="Perform CAN network attacks.",
@@ -107,6 +108,8 @@ def main():
     parser.add_argument("--feature", choices=available_features, help="Feature to attack")
     parser.add_argument("--period", type=float, default=0.1, help="Period between messages in seconds")
     parser.add_argument("--vcan", default=VCAN_ATTACKER_CHANNEL, help=f"CAN interface for the attacker bus (default: {VCAN_ATTACKER_CHANNEL})")
+    parser.add_argument("--duration", type=float, default=60.0, help="Surveillance capture duration in seconds (default: 60)")
+    parser.add_argument("--replay", default=None, help="Surveillance only: analyse an existing candump -l log file instead of a live capture")
 
     args = parser.parse_args()
     if not args.feature:
@@ -114,6 +117,26 @@ def main():
         return
     if args.feature not in available_features:
         print(f"Feature '{args.feature}' is not available. Choose from {available_features}.")
+
+    if args.feature == "surveillance":
+        mode = f"replay of {args.replay}" if args.replay else f"live capture on {args.vcan}"
+        print(f"Starting communication surveillance (C1 — passive) via {mode}…\n")
+        try:
+            result = communication_surveillance_func(
+                channel=args.vcan,
+                duration=args.duration,
+                replay_path=args.replay,
+            )
+        except KeyboardInterrupt:
+            print("\nSurveillance stopped by user.")
+            return
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return
+        print(f"\nCompiled frames CSV : {result['compiled_frames_csv']}")
+        print(f"Compiled IDs CSV    : {result['compiled_ids_csv']}")
+        return
+
     bus = can.interface.Bus(channel=args.vcan, interface=CAN_INTERFACE)
 
     try:
@@ -131,7 +154,7 @@ def main():
                     "Fake Data Fabrication", "replay", sent, rate, msg
                 ),
             )
-        else:
+        elif args.feature == "surveillance":
             print(f"Starting spoofing attack on '{args.feature}' (period={args.period}s)…\n")
             spoofing_attacks_func(bus, args.feature, args.period)
     except KeyboardInterrupt:

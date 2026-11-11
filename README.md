@@ -49,7 +49,10 @@ yes-carla-can/
 │
 ├── attacks/                      # Attack algorithm implementations
 │   ├── denial_of_service.py      #   DoS flooding attack
-│   └── reverse_engineering.py    #   Feature spoofing via reverse-engineered CAN IDs
+│   ├── fake_data_fabrication.py  #   Replay-based data fabrication attack
+│   ├── reverse_engineering.py    #   Feature spoofing via reverse-engineered CAN IDs
+│   ├── communication_surveillance.py  #   C1 passive sniffing + DBC-blind dynamic analysis
+│   └── surveillance_csv_compiler.py    #   C1 report generator
 │
 ├── can_network/                  # CAN network abstraction layer
 │   ├── dbc.py                    #   DBC loading, validation, and message definitions
@@ -551,6 +554,34 @@ You can choose a different CAN interface with `--interface`:
 ```bash
 ./collect_traffic_logs.py --duration 15 --filename can0_run.log --interface can0
 ```
+
+## Experiment #5 — Communication surveillance (C1, passive)
+
+The surveillance module implements the *Communication Surveillance* attack class: a passive, **DBC-blind** node sniffs the bus, performs dynamic statistical analysis on the live capture, and — when stopped — generates a full report. It never reads `data/carla.dbc`, so its hypotheses can be scored against the real schema to measure exactly what an attacker learned.
+
+Live capture on the attacker tap (stop with `Ctrl+C` or let `--duration` elapse):
+
+```bash
+python cyberattacks_module.py --feature surveillance --duration 60
+python cyberattacks_module.py --feature surveillance --vcan vcan0 --duration 60
+```
+
+Offline analysis (replay) of any existing `candump -l` log — no bus or CARLA needed:
+
+```bash
+python cyberattacks_module.py --feature surveillance --replay candump-2026-09-27_102406.log
+```
+
+Artifacts are written to `traffic_logs/surveillance/surveillance-<timestamp>/`:
+
+| Artifact | Content |
+|---|---|
+| `surveillance_report.md` | Human-readable report: discovered IDs, periodicity, byte maps, ranked semantic hypotheses, cross-ID correlations, next-step suggestions |
+| `findings.json` | Machine-readable analysis results (for scoring/plotting) |
+| `candidate.dbc` | DBC reconstructed from the inferred signals/periods — diff it against `data/carla.dbc` to quantify attacker knowledge |
+| `capture.log` / `capture.csv` | Raw capture in candump log and parsed CSV formats |
+
+> Note: passive surveillance adds no traffic to the bus, so it is invisible to traffic-based IDS — only cryptographic protection (e.g. SecOC) or tap detection can mitigate it.
 
 # Advanced usage - Customizing network messages and periods
 
