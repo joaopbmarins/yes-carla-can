@@ -226,6 +226,11 @@ def main():
         help='CARLA map to load (e.g. "Town01", "Town10HD"). '
              'If not set, the current world is used.',
     )
+    argparser.add_argument(
+        "--no-avtp",
+        action="store_true",
+        help="Disable AVTP RGB camera sensor and streaming to save VRAM",
+    )
     args = argparser.parse_args()
 
     args.width, args.height = [int(x) for x in args.res.split("x")]

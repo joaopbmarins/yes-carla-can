@@ -5,49 +5,56 @@ CONDA_ENV_NAME="${CONDA_ENV_NAME:-n4s_env}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DBC_PATH="${DBC_PATH:-data/carla.dbc}"
 VCAN_INTERFACE="${VCAN_INTERFACE:-vcan0}"
-MAP="${MAP:-}"
+MAP="${MAP:-Town01}"
+ENABLE_AVTP="${ENABLE_AVTP:-true}"
 AVTP_DIR="${SCRIPT_DIR}/avtp_network"
 
 usage() {
     cat <<EOF
-Usage: $0 [-h|--help] [--dbc <path>] [--vcan <name>] [--map <name>]
+Usage: $0 [-h|--help] [--dbc <path>] [--vcan <name>] [--map <name>] [--no-avtp]
 
 Start the "Yes, CARLA CAN" simulation environment.
 
 What this script does:
-  1. Launches the CARLA simulator in headless, low-quality mode
-  2. Creates the virtual CAN bus (${VCAN_INTERFACE:-vcan0}) using the Linux kernel vcan module
-  3. Creates a second virtual CAN bus (vcan1) for the attacker and bridges them via can-gw
+  1. Launches the CARLA simulator in headless, low-quality mode with VRAM-optimized settings
+  2. Sets up the AVTP virtual network and bridge (unless --no-avtp is provided)
+  3. Creates the virtual CAN bus (${VCAN_INTERFACE:-vcan0}) using the Linux kernel vcan module
+  4. Creates a second virtual CAN bus (vcan1) for the attacker and bridges them via can-gw
      so that candump labels attacker frames as 'R' and normal frames as 'T'
-  4. Waits 5 seconds for CARLA to initialise
-  5. Starts the CARLA client module (spawns the vehicle and sensors)
-  6. Starts the vehicle controls module (translates vehicle state into CAN frames)
+  5. Waits 5 seconds for CARLA to initialise
+  6. Starts the CARLA client module (spawns the vehicle and sensors)
+  7. Starts the vehicle controls module (translates vehicle state into CAN frames)
 
 Options:
   -h, --help      Show this help message and exit
   --dbc <path>    Path to the DBC file defining the virtual CAN network schema
                   (default: data/carla.dbc)
   --vcan <name>   Name of the virtual CAN interface to create (default: vcan0)
-  --map <name>    CARLA map to load in the client (e.g. Town01, Town10HD).
-                  If omitted, the client uses the map currently loaded by CARLA.
+  --map <name>    CARLA map to load in the client (e.g. Town01, Town02, Town10HD).
+                  (default: Town01)
+  --no-avtp       Disable AVTP virtual network and camera to save VRAM and start directly
+  --avtp          Force enable AVTP virtual network (default)
 
 Environment variables:
   CARLA_FOLDER_NAME     Directory where CARLA is installed (default: carla-0-9-15)
   CONDA_ENV_NAME        Conda environment to use (default: n4s_env)
   DBC_PATH              DBC file path, overridden by --dbc if provided
   VCAN_INTERFACE        Virtual CAN interface name, overridden by --vcan if provided (default: vcan0)
-  MAP                   CARLA map name, overridden by --map if provided
+  MAP                   CARLA map name, overridden by --map if provided (default: Town01)
+  ENABLE_AVTP           Set to "false" to disable AVTP, overridden by --no-avtp (default: true)
   VK_ICD_FILENAMES      Force a specific Vulkan ICD file (skips auto-detection)
 EOF
 }
 
-# Allow overriding the DBC file via --dbc argument
+# Allow overriding arguments via command line
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --dbc) DBC_PATH="$2"; shift 2 ;;
         --vcan) VCAN_INTERFACE="$2"; shift 2 ;;
         --map) MAP="$2"; shift 2 ;;
+        --no-avtp) ENABLE_AVTP="false"; shift ;;
+        --avtp) ENABLE_AVTP="true"; shift ;;
         *) echo "Unknown argument: $1"; usage; exit 1 ;;
     esac
 done
@@ -88,19 +95,22 @@ else
 fi
 
 # Start CARLA simulator in the background
-echo "Starting CARLA simulator..."
+echo "Starting CARLA simulator (-quality-level=Low)..."
 ./${CARLA_FOLDER_NAME}/CarlaUE4.sh -RenderOffScreen -quality-level=Low -nosound 2>/dev/null &
 
-echo "Setting up AVTP virtual network..."
-sudo bash "${AVTP_DIR}/setup.sh" --capture
+# Set up AVTP virtual network conditionally
+if [[ "${ENABLE_AVTP}" == "true" ]]; then
+    echo "Setting up AVTP virtual network..."
+    sudo bash "${AVTP_DIR}/setup.sh" --capture
 
-# 3. Mover a ponta veth-s para o Host (permite ao CARLA rodar no Host com acesso ao AVTP L2)
-echo "Exposing AVTP sender interface to Host..."
-sudo ip netns exec sender ip link set veth-s netns 1
-sleep 1
-sudo ip link set dev veth-s up 
-
-
+    # 3. Mover a ponta veth-s para o Host (permite ao CARLA rodar no Host com acesso ao AVTP L2)
+    echo "Exposing AVTP sender interface to Host..."
+    sudo ip netns exec sender ip link set veth-s netns 1
+    sleep 1
+    sudo ip link set dev veth-s up
+else
+    echo "AVTP network is disabled (--no-avtp). Skipping virtual network setup."
+fi
 
 # Set up virtual CAN bus
 echo "Setting up virtual CAN bus..."
@@ -118,33 +128,37 @@ sudo ip link set up vcan1
 sudo cangw -A -s vcan1 -d "${VCAN_INTERFACE}" -e 2>/dev/null || true
 sudo cangw -A -s "${VCAN_INTERFACE}" -d vcan1 -e 2>/dev/null || true
 
-
-
 # Give CARLA a moment to initialise before connecting clients
 echo "Waiting for CARLA to start..."
 sleep 5
 
-# Executa os módulos Python no Host com privilégios para o Scapy
-echo "Starting CARLA client module..."
+# Prepare CARLA client arguments
 CLIENT_ARGS=(--vcan "${VCAN_INTERFACE}")
 if [[ -n "${MAP}" ]]; then
     echo "Requesting CARLA map: ${MAP}"
     CLIENT_ARGS+=(--map "${MAP}")
 fi
+if [[ "${ENABLE_AVTP}" == "false" ]]; then
+    CLIENT_ARGS+=(--no-avtp)
+fi
 
-# Executar os módulos Python no Host com sudo -E (Acesso a vcan0 + veth-s Socket RAW + localhost)
-echo ""
-echo "======================================================================"
-echo " INFRAESTRUTURA DE REDE E CARLA PRONTOS!"
-echo " Agora, abra OUTRO terminal e inicie o RECEIVER:"
-echo ""
-echo "   xhost +local:sudo "
-echo ""
-echo ""
-echo "   sudo -E DISPLAY=\$DISPLAY PYTHONPATH=. ip netns exec receiver \"\$CONDA_PREFIX/bin/python\" avtp_network/receiver.py -i veth-r -o ."
-echo ""
-echo "======================================================================"
-read -p "Pressione [ENTER] AQUI após iniciar o receiver para subir os clientes do CARLA..."
+# Interactive receiver step when AVTP is enabled
+if [[ "${ENABLE_AVTP}" == "true" ]]; then
+    echo ""
+    echo "======================================================================"
+    echo " INFRAESTRUTURA DE REDE E CARLA PRONTOS!"
+    echo " Agora, abra OUTRO terminal e inicie o RECEIVER:"
+    echo ""
+    echo "   xhost +local:sudo "
+    echo ""
+    echo ""
+    echo "   sudo -E DISPLAY=\$DISPLAY PYTHONPATH=. ip netns exec receiver \"\$CONDA_PREFIX/bin/python\" avtp_network/receiver.py -i veth-r -o ."
+    echo ""
+    echo "======================================================================"
+    read -p "Pressione [ENTER] AQUI após iniciar o receiver para subir os clientes do CARLA..."
+else
+    echo "AVTP disabled: starting CARLA client and vehicle controls directly."
+fi
 
 # Executar os módulos Python no Host
 echo "Starting CARLA client module..."
