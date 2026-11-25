@@ -185,3 +185,4 @@ candump*
 *.pcap
 
 output_stream*
+results/latest
