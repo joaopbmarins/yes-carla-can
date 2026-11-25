@@ -7,11 +7,12 @@ DBC_PATH="${DBC_PATH:-data/carla.dbc}"
 VCAN_INTERFACE="${VCAN_INTERFACE:-vcan0}"
 MAP="${MAP:-Town01}"
 ENABLE_AVTP="${ENABLE_AVTP:-true}"
+PERFORMANCE_MODE="${PERFORMANCE_MODE:-false}"
 AVTP_DIR="${SCRIPT_DIR}/avtp_network"
 
 usage() {
     cat <<EOF
-Usage: $0 [-h|--help] [--dbc <path>] [--vcan <name>] [--map <name>] [--no-avtp]
+Usage: $0 [-h|--help] [--dbc <path>] [--vcan <name>] [--map <name>] [--no-avtp] [--performance]
 
 Start the "Yes, CARLA CAN" simulation environment.
 
@@ -33,7 +34,9 @@ Options:
   --map <name>    CARLA map to load in the client (e.g. Town01, Town02, Town10HD).
                   (default: Town01)
   --no-avtp       Disable AVTP virtual network and camera to save VRAM and start directly
-  --avtp          Force enable AVTP virtual network (default)
+  --performance   Performance mode: starts CARLA with motion blur and anti-aliasing
+                  disabled. Combined with --no-avtp it also disables server rendering
+                  (no_rendering_mode=True), the fastest configuration.
 
 Environment variables:
   CARLA_FOLDER_NAME     Directory where CARLA is installed (default: carla-0-9-15)
@@ -42,6 +45,7 @@ Environment variables:
   VCAN_INTERFACE        Virtual CAN interface name, overridden by --vcan if provided (default: vcan0)
   MAP                   CARLA map name, overridden by --map if provided (default: Town01)
   ENABLE_AVTP           Set to "false" to disable AVTP, overridden by --no-avtp (default: true)
+  PERFORMANCE_MODE      Set to "true" for performance mode, same as --performance (default: false)
   VK_ICD_FILENAMES      Force a specific Vulkan ICD file (skips auto-detection)
 EOF
 }
@@ -54,7 +58,7 @@ while [[ $# -gt 0 ]]; do
         --vcan) VCAN_INTERFACE="$2"; shift 2 ;;
         --map) MAP="$2"; shift 2 ;;
         --no-avtp) ENABLE_AVTP="false"; shift ;;
-        --avtp) ENABLE_AVTP="true"; shift ;;
+        --performance|--perf) PERFORMANCE_MODE="true"; shift ;;
         *) echo "Unknown argument: $1"; usage; exit 1 ;;
     esac
 done
@@ -96,7 +100,17 @@ fi
 
 # Start CARLA simulator in the background
 echo "Starting CARLA simulator (-quality-level=Low)..."
-./${CARLA_FOLDER_NAME}/CarlaUE4.sh -RenderOffScreen -quality-level=Low -nosound 2>/dev/null &
+CARLA_ARGS=(-RenderOffScreen -quality-level=Low -nosound)
+if [[ "${PERFORMANCE_MODE}" == "true" ]]; then
+    # Applied at server launch; the Python client cannot change these.
+    echo "Performance mode: disabling motion blur and anti-aliasing."
+    CARLA_ARGS+=(
+        -ENGINEINI="${SCRIPT_DIR}/perf.ini"
+    )
+fi
+./${CARLA_FOLDER_NAME}/CarlaUE4.sh "${CARLA_ARGS[@]}" 2>/dev/null &
+
+
 
 # Set up AVTP virtual network conditionally
 if [[ "${ENABLE_AVTP}" == "true" ]]; then
@@ -140,6 +154,9 @@ if [[ -n "${MAP}" ]]; then
 fi
 if [[ "${ENABLE_AVTP}" == "false" ]]; then
     CLIENT_ARGS+=(--no-avtp)
+fi
+if [[ "${PERFORMANCE_MODE}" == "true" ]]; then
+    CLIENT_ARGS+=(--performance)
 fi
 
 # Interactive receiver step when AVTP is enabled

@@ -42,6 +42,19 @@ def game_loop(args):
     pygame.init()
     pygame.font.init()
 
+    if args.performance:
+        if args.rendering_disabled:
+            print(
+                "[PERF] Performance mode: server rendering disabled "
+                "(no_rendering_mode=True)."
+            )
+        else:
+            print(
+                "[PERF] Performance mode: motion blur and anti-aliasing "
+                "disabled at CARLA launch; rendering kept on because the "
+                "AVTP camera is enabled."
+            )
+
     root = tk.Tk()
     width = root.winfo_screenwidth()
     height = root.winfo_screenheight()
@@ -64,10 +77,10 @@ def game_loop(args):
         else:
             sim_world = client.get_world()
             
-        # Disable rendering and set fixed time step
-
+        # Rendering is only disabled when performance mode is on AND the AVTP
+        # camera is off: no_rendering_mode would starve the camera of frames.
         world_settings = sim_world.get_settings()
-        world_settings.no_rendering_mode = False
+        world_settings.no_rendering_mode = True #args.rendering_disabled
         # fps = 30
         # world_settings.fixed_delta_seconds = round(1/fps, 2) # Set FPS
         sim_world.apply_settings(world_settings)
@@ -231,9 +244,19 @@ def main():
         action="store_true",
         help="Disable AVTP RGB camera sensor and streaming to save VRAM",
     )
+    argparser.add_argument(
+        "--performance",
+        "--perf",
+        action="store_true",
+        dest="performance",
+        help="Performance mode: disable motion blur and anti-aliasing in CARLA. "
+             "Combined with --no-avtp it also disables server rendering "
+             "(no_rendering_mode=True).",
+    )
     args = argparser.parse_args()
 
     args.width, args.height = [int(x) for x in args.res.split("x")]
+    args.rendering_disabled = args.performance and args.no_avtp
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(format="%(levelname)s: %(message)s", level=log_level)
