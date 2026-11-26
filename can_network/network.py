@@ -1,7 +1,13 @@
 import can
 import carla
 
-from can_network.dbc import load_and_validate, REQUIRED_SIGNALS, LIGHT_SIGNALS, SENSOR_MESSAGES
+from can_network.dbc import (
+    load_and_validate,
+    REQUIRED_SIGNALS,
+    LIGHT_SIGNALS,
+    SENSOR_MESSAGES,
+    GATEWAY_MESSAGES,
+)
 
 VCAN_CHANNEL = "vcan0"
 VCAN_ATTACKER_CHANNEL = "vcan1"
@@ -181,6 +187,24 @@ class CAN_Network(object):
             "RADAR_DEPTH_signal": depth,
         }))
 
+    # ------------------------------------------------------------------
+    # Gateway senders
+    # ------------------------------------------------------------------
+
+    def send_gateway_advertisement_msg(self, pairing_mode_active, security_level=1):
+        """Broadcast gateway pairing availability and security level on the CAN bus."""
+        self.bus.send(self._build_sensor_msg("GATEWAY_ADVERTISEMENT", {
+            "pairing_mode_active": int(bool(pairing_mode_active)),
+            "security_level":      int(security_level) & 0x0F,
+        }))
+
+    def send_gateway_pairing_cmd_msg(self, client_id, pairing_request=1):
+        """Emit a gateway pairing command event frame onto the CAN bus."""
+        self.bus.send(self._build_sensor_msg("GATEWAY_PAIRING_CMD", {
+            "client_id":       int(client_id) & 0xFF,
+            "pairing_request": int(bool(pairing_request)),
+        }))
+
     def send_msg(self, controls):
         """Convenience method — sends all messages at once (bypasses per-message timing)."""
         self.send_throttle_msg(controls)
@@ -250,8 +274,8 @@ class CAN_Network(object):
                         lights_int |= flag
                 self.current_lights = carla.VehicleLightState(lights_int)
 
-            elif name in SENSOR_MESSAGES:
-                pass  # sensor telemetry — published by the CARLA client; no actuation here
+            elif name in SENSOR_MESSAGES or name in GATEWAY_MESSAGES:
+                pass  # telemetry / gateway status — no vehicle actuation here
 
             try:
                 recv_msg = self.bus.recv(timeout=0)

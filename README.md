@@ -553,6 +553,38 @@ You can choose a different CAN interface with `--interface`:
 ./collect_traffic_logs.py --duration 15 --filename can0_run.log --interface can0
 ```
 
+## Experiment #5 — External Gateway & Malicious Pairing Attack
+
+This experiment demonstrates an external telematics/infotainment gateway (`gateway_module.py`) bridging a simulated BLE GATT interface (`127.0.0.1:5555`) to `vcan0`, reproducing vulnerabilities **V1 (Unauthenticated Pairing)** and **V2 (Unintentional 17-second Pairing Mode)** from *E-Spoofer*:
+
+1. Start the simulation environment (this also launches `gateway_module.py`):
+
+```bash
+./1_up_environment.sh --no-avtp --performance
+```
+
+2. In a second terminal, start a 30-second CAN traffic capture:
+
+```bash
+./collect_traffic_logs.py --duration 30 --filename exp5_malicious_pairing.log
+```
+
+3. In a third terminal, launch the Malicious Pairing attack targeting `hand_brake`:
+
+```bash
+conda run --no-capture-output -n n4s_env python3 cyberattacks_module.py --attack malicious_pairing --target hand_brake
+```
+
+4. In the `vehicle_controls_module.py` window, hold `W` to accelerate the vehicle and press `Shift+L` to toggle the **High Beam** (`LIGHTS_HighBeam_signal = 1`).
+   - `gateway_module.py` opens its 17-second pairing window and broadcasts `GATEWAY_ADVERTISEMENT` (`0x620`) with `pairing_mode_active = 1`.
+   - `malicious_pairing.py` detects the window, pairs without credentials (`GATEWAY_PAIRING_CMD` `0x621`), and continuously injects `HAND_BRAKE` (`0x604`), immobilizing the vehicle in CARLA even while accelerating.
+
+5. Tear down the environment when finished:
+
+```bash
+./2_down_environment.sh
+```
+
 # Advanced usage - Customizing network messages and periods
 
 The virtual CAN network is configured via a DBC file. You can change CAN IDs and transmission periods without touching any code, which is useful, for example, when evaluating how well a detection algorithm generalises to a different network configuration.

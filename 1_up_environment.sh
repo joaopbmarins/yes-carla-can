@@ -184,4 +184,7 @@ sudo -E "${PYTHON_EXEC}" "${SCRIPT_DIR}/CARLA_client_module.py" "${CLIENT_ARGS[@
 echo "Starting vehicle controls module..."
 sudo "${PYTHON_EXEC}" "${SCRIPT_DIR}/vehicle_controls_module.py" --dbc "${DBC_PATH}" --vcan "${VCAN_INTERFACE}" &
 
+echo "Starting gateway module..."
+sudo -E "${PYTHON_EXEC}" "${SCRIPT_DIR}/gateway_module.py" --dbc "${DBC_PATH}" --vcan "${VCAN_INTERFACE}" &
+
 echo "Environment is completely up!"

@@ -100,3 +100,18 @@ SENSOR_DBC = FULL_DBC.replace(
     ' SG_ RADAR_DEPTH_signal : 48|16@1+ (0.01,0) [0|655.35] "m" ECU\n'
     '\nBA_ "GenMsgCycleTime" BO_ 1556 0;\n',
 )
+
+# FULL_DBC extended with DOORS and the optional Gateway messages (0x620, 0x621).
+GATEWAY_DBC = FULL_DBC + (
+    '\nBO_ 1548 DOORS: 1 ECU\n'
+    ' SG_ DOORS_signal : 0|8@1+ (1,0) [0|255] "" ECU\n'
+    '\nBO_ 1568 GATEWAY_ADVERTISEMENT: 2 ECU\n'
+    ' SG_ pairing_mode_active : 0|1@1+ (1,0) [0|1] "" ECU\n'
+    ' SG_ security_level : 1|4@1+ (1,0) [0|15] "" ECU\n'
+    '\nBO_ 1569 GATEWAY_PAIRING_CMD: 2 ECU\n'
+    ' SG_ client_id : 0|8@1+ (1,0) [0|255] "" ECU\n'
+    ' SG_ pairing_request : 8|1@1+ (1,0) [0|1] "" ECU\n'
+    '\nBA_ "GenMsgCycleTime" BO_ 1548 0;\n'
+    'BA_ "GenMsgCycleTime" BO_ 1568 200;\n'
+    'BA_ "GenMsgCycleTime" BO_ 1569 0;\n'
+)

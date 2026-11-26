@@ -51,13 +51,28 @@ SENSOR_SIGNAL_NAMES = {
     name: frozenset(sigs) for name, (sigs, _) in SENSOR_MESSAGES.items()
 }
 
-# Derived constants — do not edit these; edit MESSAGES / SENSOR_MESSAGES above instead.
+# Gateway messages — optional multi-signal messages used by the external gateway module.
+GATEWAY_MESSAGES = {
+    "GATEWAY_ADVERTISEMENT": (("pairing_mode_active", "security_level"), "send_gateway_advertisement_msg"),
+    "GATEWAY_PAIRING_CMD":   (("client_id", "pairing_request"),          "send_gateway_pairing_cmd_msg"),
+}
+
+GATEWAY_SIGNAL_NAMES = {
+    name: frozenset(sigs) for name, (sigs, _) in GATEWAY_MESSAGES.items()
+}
+
+# Derived constants — do not edit these; edit MESSAGES / SENSOR_MESSAGES / GATEWAY_MESSAGES above instead.
 REQUIRED_MESSAGES = frozenset(name for name, (_, _, required) in MESSAGES.items() if required)
-SUPPORTED_MESSAGES = frozenset(MESSAGES.keys()) | frozenset(SENSOR_MESSAGES.keys())
+SUPPORTED_MESSAGES = (
+    frozenset(MESSAGES.keys())
+    | frozenset(SENSOR_MESSAGES.keys())
+    | frozenset(GATEWAY_MESSAGES.keys())
+)
 REQUIRED_SIGNALS   = {name: sig    for name, (sig, _, _)    in MESSAGES.items() if sig is not None}
 MESSAGE_SENDERS    = (
     {name: method for name, (_, method, _) in MESSAGES.items()       if method is not None}
     | {name: method for name, (_, method)  in SENSOR_MESSAGES.items()}
+    | {name: method for name, (_, method)  in GATEWAY_MESSAGES.items()}
 )
 
 
@@ -113,18 +128,22 @@ def load_and_validate(dbc_path):
                 f"{sorted(missing_light_signals)}"
             )
 
-    # Validate sensor messages: all declared signal names must exist in the DBC.
-    for msg_name, expected_signals in SENSOR_SIGNAL_NAMES.items():
-        if msg_name not in db_names:
-            continue  # sensor messages are optional
-        dbc_msg = db.get_message_by_name(msg_name)
-        actual_signals = frozenset(s.name for s in dbc_msg.signals)
-        missing = expected_signals - actual_signals
-        if missing:
-            raise ValueError(
-                f"[CAN] Sensor message '{msg_name}' is missing expected signals: "
-                f"{sorted(missing)}"
-            )
+    # Validate multi-signal optional messages (sensors & gateway): all declared signal names must exist in the DBC.
+    for category, signal_map in (
+        ("Sensor", SENSOR_SIGNAL_NAMES),
+        ("Gateway", GATEWAY_SIGNAL_NAMES),
+    ):
+        for msg_name, expected_signals in signal_map.items():
+            if msg_name not in db_names:
+                continue  # optional messages may be absent
+            dbc_msg = db.get_message_by_name(msg_name)
+            actual_signals = frozenset(s.name for s in dbc_msg.signals)
+            missing = expected_signals - actual_signals
+            if missing:
+                raise ValueError(
+                    f"[CAN] {category} message '{msg_name}' is missing expected signals: "
+                    f"{sorted(missing)}"
+                )
 
     # Informational: DBC has messages the system doesn't handle.
     unhandled = db_names - SUPPORTED_MESSAGES

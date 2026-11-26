@@ -29,6 +29,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AVTP_DIR="${SCRIPT_DIR}/avtp_network"
 VCAN_INTERFACE="${VCAN_INTERFACE:-vcan0}"
 
+# Stop gateway module
+echo "Stopping gateway module..."
+GATEWAY_PID=$(pgrep -d ' ' -f "gateway_module.py")
+if [ -n "$GATEWAY_PID" ]; then
+    kill $GATEWAY_PID
+    echo "gateway_module (PID $GATEWAY_PID) stopped."
+else
+    echo "gateway_module process not found."
+fi
+
 # Stop vehicle controls module
 echo "Stopping vehicle controls module..."
 VEHICLE_CONTROLS_PID=$(pgrep -d ' ' -f "vehicle_controls_module.py")

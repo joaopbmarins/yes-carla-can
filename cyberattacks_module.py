@@ -4,6 +4,12 @@ import sys
 import time
 import random
 
+from attacks.malicious_pairing import (
+    DEFAULT_GATEWAY_HOST,
+    DEFAULT_GATEWAY_PORT,
+    TARGET_COMMAND_MAP,
+    run_malicious_pairing_attack,
+)
 from attacks.reverse_engineering import FEATURE_CAN_ID_PAYLOAD_MAPPER
 from can_network import VCAN_ATTACKER_CHANNEL, CAN_INTERFACE
 
@@ -93,22 +99,59 @@ def spoofing_attacks_func(bus, feature: str, period: float):
         time.sleep(period)
 
 
+def _print_gateway_status(target: str, sent: int, rate: float, resp: dict):
+    arb_id = int(resp["arbitration_id"], 16)
+    val = int(resp["value"])
+    msg = can.Message(arbitration_id=arb_id, data=[val], is_extended_id=False)
+    _print_status("Malicious Pairing", target, sent, rate, msg)
+
+
 def main():
     print("CAN network attacks CLI")
     spoofing_attacks = list(FEATURE_CAN_ID_PAYLOAD_MAPPER.keys())
     available_features = [*spoofing_attacks, "fuzzy", "denial_of_service"]
+    available_targets = sorted(TARGET_COMMAND_MAP.keys())
 
     parser = argparse.ArgumentParser(
         description="Perform CAN network attacks.",
         epilog="Attacker frames are sent on vcan1 (default), which bridges to vcan0 via vxcan/can-gw so candump marks them as 'R' (received) for labeled datasets.",
     )
     parser.add_argument("--feature", choices=available_features, help="Feature to attack")
+    parser.add_argument(
+        "--attack",
+        choices=["malicious_pairing"],
+        help="High-level attack mode (e.g. malicious_pairing)",
+    )
+    parser.add_argument(
+        "--target",
+        choices=available_targets,
+        default="hand_brake",
+        help="Target control for --attack malicious_pairing (default: hand_brake)",
+    )
+    parser.add_argument("--gateway-host", default=DEFAULT_GATEWAY_HOST, help=f"Gateway host (default: {DEFAULT_GATEWAY_HOST})")
+    parser.add_argument("--gateway-port", type=int, default=DEFAULT_GATEWAY_PORT, help=f"Gateway port (default: {DEFAULT_GATEWAY_PORT})")
     parser.add_argument("--period", type=float, default=0.1, help="Period between messages in seconds")
     parser.add_argument("--vcan", default=VCAN_ATTACKER_CHANNEL, help=f"CAN interface for the attacker bus (default: {VCAN_ATTACKER_CHANNEL})")
 
     args = parser.parse_args()
+    if args.attack == "malicious_pairing":
+        try:
+            print(f"Starting malicious_pairing attack targeting '{args.target}' (period={args.period}s)…\n")
+            run_malicious_pairing_attack(
+                target=args.target,
+                host=args.gateway_host,
+                port=args.gateway_port,
+                period=args.period,
+                on_status=_print_gateway_status,
+            )
+        except KeyboardInterrupt:
+            print("\nAttack stopped by user.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+        return
+
     if not args.feature:
-        print("No feature specified. Use --feature to select a feature.")
+        print("No feature or attack specified. Use --feature or --attack.")
         return
     if args.feature not in available_features:
         print(f"Feature '{args.feature}' is not available. Choose from {available_features}.")

@@ -1,7 +1,13 @@
 """Unit tests for can_network/dbc.py — DBC loading and validation rules."""
 import pytest
-from can_network.dbc import load_and_validate, REQUIRED_MESSAGES, SUPPORTED_MESSAGES, SENSOR_MESSAGES
-from constants import MINIMAL_DBC, SENSOR_DBC
+from can_network.dbc import (
+    GATEWAY_MESSAGES,
+    REQUIRED_MESSAGES,
+    SENSOR_MESSAGES,
+    SUPPORTED_MESSAGES,
+    load_and_validate,
+)
+from constants import GATEWAY_DBC, MINIMAL_DBC, SENSOR_DBC
 
 
 @pytest.fixture
@@ -162,4 +168,43 @@ def test_sensor_message_with_missing_signal_raises_value_error(tmp_path):
     p = tmp_path / "missing_sensor_signal.dbc"
     p.write_text(broken)
     with pytest.raises(ValueError, match="GNSS"):
+        load_and_validate(p)
+
+
+# ---------------------------------------------------------------------------
+# Gateway message tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def gateway_dbc(tmp_path):
+    """Temporary DBC file with control messages and the 2 gateway messages."""
+    p = tmp_path / "gateway.dbc"
+    p.write_text(GATEWAY_DBC)
+    return p
+
+
+def test_gateway_messages_in_supported_messages():
+    """All GATEWAY_MESSAGES names must be part of SUPPORTED_MESSAGES."""
+    for name in GATEWAY_MESSAGES:
+        assert name in SUPPORTED_MESSAGES, f"{name} missing from SUPPORTED_MESSAGES"
+
+
+def test_gateway_messages_load_and_cycle_times(gateway_dbc):
+    """GATEWAY_ADVERTISEMENT has 200ms cycle time; GATEWAY_PAIRING_CMD is event-driven."""
+    db, cycle_times = load_and_validate(gateway_dbc)
+    assert db is not None
+    assert cycle_times["GATEWAY_ADVERTISEMENT"] == pytest.approx(0.2)
+    assert "GATEWAY_PAIRING_CMD" not in cycle_times
+
+
+def test_gateway_message_missing_signal_raises_value_error(tmp_path):
+    """Removing a declared signal from a gateway message raises ValueError."""
+    broken = GATEWAY_DBC.replace(
+        ' SG_ pairing_mode_active : 0|1@1+ (1,0) [0|1] "" ECU\n',
+        '',
+    )
+    p = tmp_path / "missing_gateway_signal.dbc"
+    p.write_text(broken)
+    with pytest.raises(ValueError, match="GATEWAY_ADVERTISEMENT"):
         load_and_validate(p)
